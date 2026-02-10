@@ -10,10 +10,8 @@ import com.example.lease_management.dto.Lease.LeaseDTO;
 import com.example.lease_management.dto.Lease.LeaseRequest;
 import com.example.lease_management.dto.LeaseItem.LeaseItemDTO;
 import com.example.lease_management.dto.LeaseItem.LeaseItemRequest;
-import com.example.lease_management.entity.Customer;
-import com.example.lease_management.entity.Item;
-import com.example.lease_management.entity.Lease;
-import com.example.lease_management.entity.LeaseItem;
+import com.example.lease_management.entity.*;
+import com.example.lease_management.security.CurrentUserProvider;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
@@ -33,31 +31,35 @@ LeaseService {
     private final LeaseItemRepo leaseItemRepo;
     private final ItemRepo itemRepo;
     private final CustomerRepo customerRepo;
+    private final CurrentUserProvider currentUserProvider;
 
     public LeaseService(
-            LeaseRepo leaseRepo, LeaseItemRepo leaseItemRepo, ItemRepo itemRepo, CustomerRepo customerRepo
+            LeaseRepo leaseRepo, LeaseItemRepo leaseItemRepo, ItemRepo itemRepo, CustomerRepo customerRepo, CurrentUserProvider currentUserProvider
     ){
         this.leaseRepo = leaseRepo;
         this.leaseItemRepo = leaseItemRepo;
         this.customerRepo = customerRepo;
         this.itemRepo = itemRepo;
+        this.currentUserProvider = currentUserProvider;
     }
 
     @Transactional
     // we need to save customer, item details as lease record
     public LeaseDTO create (LeaseRequest leaseRequest){
-        Customer customer = customerRepo.findById(leaseRequest.customerId())
+        User user = currentUserProvider.get();
+        Customer customer = customerRepo.findByIdAndUserAndDeletedFalse(leaseRequest.customerId(), user)
                 .orElseThrow(()-> new EntityNotFoundException("Customer not found !"));
 
         Lease lease = new Lease();
         lease.setCustomer(customer);
         lease.setNotes(leaseRequest.notes());
+        lease.setUser(user);
 
         BigDecimal grandTotal = BigDecimal.ZERO;
 
         //checking items, if they exist then create leaseItem record
         for(LeaseItemRequest leaseItemRequest : leaseRequest.items()){
-           Item item = itemRepo.findById(leaseItemRequest.itemId())
+           Item item = itemRepo.findByIdAndUserAndDeletedFalse(leaseItemRequest.itemId(), user)
                     .orElseThrow(()-> new EntityNotFoundException("LeaseItem not found for id: "+leaseItemRequest.itemId()));
 
            //Calculate totalDays based on leaseItemRequest data.
@@ -80,6 +82,7 @@ LeaseService {
             leaseItem.setDailyRateSnapshot(leaseItemRequest.pricePerDay());
             leaseItem.setTotalDays((int) totalDays);
             leaseItem.setTotalBill(totalBill);
+            leaseItem.setUser(user);
 
             lease.addLeaseItem(leaseItem); //adding leasedItem record in lease
             grandTotal = grandTotal.add(totalBill); //adding total of a leasedItem
@@ -91,13 +94,15 @@ LeaseService {
     }
 
     public LeaseDTO getLease(Long id){
-        Lease lease = leaseRepo.findActiveById(id)
+        User user = currentUserProvider.get();
+        Lease lease = leaseRepo.findActiveById(id, user)
                 .orElseThrow(() -> new EntityNotFoundException("Lease record not found or deleted!"));
         return toDTO(lease);
     }
 
     public List<LeaseDTO> getList(LocalDate from, LocalDate to, String customerName){
-        List<Lease> leaseList = leaseRepo.searchActiveLeases(customerName);
+        User user = currentUserProvider.get();
+        List<Lease> leaseList = leaseRepo.searchActiveLeases(user, customerName);
 
         // filter by dates in Java
         if (from != null || to != null) {
@@ -113,7 +118,8 @@ LeaseService {
     }
 
         public LeaseDTO updateLease(LeaseRequest req, Long id){
-            Lease existedLease = leaseRepo.findById(id).orElseThrow(()-> new EntityNotFoundException("Lease Record not found for id: "+id));
+            User user = currentUserProvider.get();
+            Lease existedLease = leaseRepo.findByIdAndUser(id, user).orElseThrow(()-> new EntityNotFoundException("Lease Record not found for id: "+id));
 
             if(req.notes() != null){
                 existedLease.setNotes(req.notes());
@@ -133,10 +139,11 @@ LeaseService {
                         // New LeaseItem → create fresh
                         li = new LeaseItem();
                         li.setLease(existedLease);
-                        Item item = itemRepo.findById(itemRequest.itemId())
+                        Item item = itemRepo.findByIdAndUserAndDeletedFalse(itemRequest.itemId(), user)
                                 .orElseThrow(() -> new EntityNotFoundException("Item not found"));
 
                         li.setItem(item);
+                        li.setUser(user);
                         li.setDailyRateSnapshot(item.getPricePerDay());
 
                         existedLease.getLeaseItems().add(li);
@@ -167,7 +174,8 @@ LeaseService {
 
     @Transactional
     public void softDeleteLease(Long id) {
-        Lease lease = leaseRepo.findById(id).orElseThrow();
+        User user = currentUserProvider.get();
+        Lease lease = leaseRepo.findByIdAndUser(id, user).orElseThrow();
         lease.setDeleted(true);
         leaseRepo.save(lease);
     }
@@ -196,7 +204,9 @@ LeaseService {
                 lease.getCustomer().getName(),
                 lease.getGrandTotal(),
                 lease.getNotes(),
-                leaseItemDTOList
+                leaseItemDTOList,
+                lease.getCreatedAt(),
+                lease.getUpdatedAt()
         );
     }
 

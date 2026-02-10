@@ -7,6 +7,8 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import lombok.*;
 
+import java.time.LocalDateTime;
+
 @Entity
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 @Table(name = "customers")
@@ -29,4 +31,15 @@ public class Customer {
 
     @Column(name = "is_deleted")
     private Boolean deleted = false;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    @Column(name = "created_at", insertable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at" , insertable = false, updatable = false)
+    private LocalDateTime updatedAt;
+
 }
